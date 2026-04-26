@@ -1,13 +1,8 @@
 name: Cordova Build
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-
+  workflow_dispatch:
+      
 permissions:
   # required to modify releases
   contents: write
@@ -48,16 +43,25 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
 
+      # Add Build Tools to PATH (fixes apksigner command not found)
+      - name: Add Build Tools to PATH
+        run: echo "$ANDROID_HOME/build-tools/30.0.3" >> $GITHUB_PATH
+
       # Set up Gradle
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '7.6.5' # Specify a stable Gradle version compatible with Android builds
 
+      # Setup signing files (keystore and pass.txt already in repo)
+      - name: Setup signing files
+        run: |
+          chmod 600 0.2Studio.keystore # 安全权限
+
       # Install Cordova globally
       - name: Install Cordova
         run: npm install -g cordova
-
+        
       # Find and unzip the project's zip file
       - name: Unzip project
         run: |
@@ -75,7 +79,7 @@ jobs:
           cd project
           npm install
 
-      # Run npm build
+      # Run npm build (assumes this runs cordova build android --debug)
       - name: Build project
         run: |
           cd project
@@ -84,9 +88,31 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
 
+      # Copy APK
+      - name: Copy APK
+        run: cp ./project/platforms/android/app/build/outputs/apk/debug/app-debug.apk app-debug.apk
+
+      # Sign APK
+      - name: Sign APK
+        run: |
+          apksigner sign --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --ks 0.2Studio.keystore --ks-key-alias 0.2Studio \
+            --ks-pass pass:0.2Studio --key-pass pass:0.2Studio \
+            --out app-signed.apk app-debug.apk    
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+
+      - name: Verify signature
+        run: apksigner verify --verbose --print-certs app-signed.apk
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+
+      # Upload artifacts to tag
       - name: Upload artifacts to tag
         uses: xresloader/upload-to-github-release@2bcae85344d41e21f7fc4c47fa2ed68223afdb49
         with:
-          file: ./project/platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          file: ./app-signed.apk
           draft: false
           tag_name: "deep-sea-build"
